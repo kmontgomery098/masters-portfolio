@@ -1,0 +1,114 @@
+---
+title: "GWAS_colon"
+output: html_document
+---
+
+```{r setup, message=FALSE}
+source("http://bioconductor.org/biocLite.R")
+biocLite("snpStats")
+library(snpStats)
+biocLite("SNPassoc")
+library(SNPassoc)
+colon<-read.delim("colon.txt")
+snps<-read.plink("colon.bed","colon.bim","colon.fam")
+gene<-snps$genotype
+annot<-snps$map
+
+identical(rownames(gene),rownames(colon)) 
+
+#Data Organization
+#rownames(colon)<-colon$id
+#colon<-colon[rownames(gene),]
+#identical(rownames(colon),rownames(gene))
+
+```
+
+SNPs associated with colon cancer are examined by performing a GWAS of 2312 individuals. Initial steps are for data organization to ensure data is compatible and labeled properly. As joining data from different file types is an essential step, it is important to confirm phenotype and genotype data are congruous.
+
+A quality control step is performed before association analyses to exclude values that are not in Hardy Weinberg equilibrium and don’t meed a 0.9 call rate.
+
+```{r}
+#gene QC 
+QC<-col.summary(gene)
+QC$pvalHWE<-pnorm(abs(QC$z.HWE),lower=FALSE) #computes pval that values are in HWE
+aa<-QC$MAF>0.05 & QC$pvalHWE>0.001 & QC$Call.rate>0.90
+gene.qc<-gene[,aa & !is.na(aa)]
+
+#individual QC
+QC.ind<-row.summary(gene)
+plot(QC.ind$Heterozygosity)
+aa2<-QC.ind$Heterozygosity<0.33 & QC.ind$Heterozygosity>0.3 #*
+gene.sel<-gene.qc[aa2,]
+
+#colon.sel<-colon[QC.ind,] #got error?
+#identical(rownames(colon.sel),rownames(gene.sel)) #FALSE?
+```
+
+
+
+
+
+Association Analyses
+
+```{r}
+results<-single.snp.tests(cascon,data=colon,snp.data=gene.qc)
+#res<-snp.rhs.tests( cascon~1,data=colon,snp.data=gene.qc,family="Gaussian")
+```
+Multiple comparisons compound the likelihood of rare events. For this reason, the Bonferroni correction is required to adjust the significance level in order to reject the null hypothesis at a more stringent p-value. False discovery rate reducing mechanisms are less stringent than the Bonferroni correction. Without this stricter restriction, about 11 SNPs are associated with colon cancer. The FDR and Bonferroni correction return the same top two SNPs.
+
+```{r}
+pval<-p.value(results,df=1)
+plot(-log10(pval),col=ifelse(pval<0.0001,"red","black"))
+```
+
+```{r}
+bon.f<-1e-8
+results[pval<bon.f & !is.na(pval)]
+p.adj2<-p.adjust(pval,method="fdr")
+p.adj<-p.adjust(pval,method="bonferroni")
+
+ans<-data.frame(SNP=annot[names(pval),"snp.name"], pvalue=pval, fdr=p.adj2, bf=p.adj)
+ans.o<-ans[order(ans$fdr),]
+ans.test<-ans[order(ans$bf),]
+head(ans.o, n=10)
+head(ans.test, n=10)
+```
+
+A QQ plot computes lambda to detect population stratification. It appears that this data set is not stratified as the values are not inflated, instead falling within the confidence band.
+```{r}
+chi2<-chi.squared(results, df=1)
+qq.chisq(chi2)
+```
+
+The Manhattan plot below displays two significant SNPs associated with colon cancer.
+
+```{r}
+library(qqman)
+an<-annot[colnames(gene.qc),]
+CHR<-an$chromosome
+BP<-an$position
+SNP<-an$snp.name
+P<-pval
+x<-data.frame(SNP=SNP,CHR=CHR,BP=BP,P=P)
+x<-x[!is.na(x$P),]
+manhattan(x)
+```
+
+I confirmed the IDs of both dataframes were correct and plan to perform an odds ratio test using the WGassociation package. The degree of association between SNP and disease is measured with the odds ratio. If the probability of both outcomes is the same, 1, then there is no association. Computing the odds ratio with WGstats should be straight forward, however I am returning an error message due to my data.frame.
+
+```{r}
+t<-as.data.frame(gene.qc[,"rs4733560"])
+t2<-as.data.frame(gene.qc[,"rs10112382"])
+t3<-cbind(t,t2)
+t4<-apply(t3,2,as.numeric)
+new.df<-cbind(colon,t4)
+snp.id<-grep("^rs",colnames(new.df))
+df<-as.data.frame(new.df)
+colon.s<-setupSNP(new.df,name.genotype=c(1,2,3))
+```
+
+
+
+The two mot significant SNPs were not located in the colorectal cancer SNPedia, an online open-source tool to track genomic data as it applies to personal medicine.
+
+“Colorectal cancer.” Colorectal cancer - SNPedia. N.p., n.d. Web. 02 Feb. 2017.
